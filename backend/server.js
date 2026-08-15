@@ -32,6 +32,9 @@ const SocketServer = require("../socket/socket");
 // Initialize Express app
 const app = express();
 const server = http.createServer(app);
+// Trust the first hop (nginx) so req.ip / X-Forwarded-For based rate
+// limiting sees real client IPs instead of the proxy's.
+app.set("trust proxy", 1);
 app.set("redis", redisClient);
 // Basic Middlewares
 app.use(express.json({ limit: "10mb" }));

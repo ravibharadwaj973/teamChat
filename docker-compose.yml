@@ -50,11 +50,25 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:7000/api
-        NEXT_PUBLIC_SOCKET_URL: http://localhost:5001
+        # Same-origin: nginx below is the entry point, and proxies /api and
+        # /socket.io/ back to backend. No host port published for this
+        # service — going straight to it would bake in a broken origin for
+        # those requests, so access the app through nginx instead.
+        NEXT_PUBLIC_API_URL: /api
+        NEXT_PUBLIC_SOCKET_URL: /
     restart: unless-stopped
     init: true
     depends_on:
       - backend
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - frontend
+      - backend
     ports:
-      - "3000:3000"
+      - "80:80"

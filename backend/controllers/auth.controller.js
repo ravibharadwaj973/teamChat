@@ -78,7 +78,7 @@ const registerUser = async (req, res) => {
     // Set cookie
     res.cookie('token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: req.secure,
       sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
@@ -134,7 +134,7 @@ const loginUser = async (req, res) => {
         error: "Invalid credentials." 
       });
     }
-
+console.log(email)
     // Check password
     const isPasswordValid = await bcrypt.compare(password, user.password);
     
@@ -144,7 +144,7 @@ const loginUser = async (req, res) => {
         error: "Invalid credentials." 
       });
     }
-
+console.log(isPasswordValid)
     // Generate token
     const token = jwt.sign(
       { 
@@ -166,7 +166,7 @@ const loginUser = async (req, res) => {
     // Set cookie
     res.cookie('token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: req.secure,
       sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -302,7 +302,7 @@ const googleLogin = async (req, res) => {
     res.cookie('token', sessionToken, {
       httpOnly: true,
       sameSite: 'strict',
-      secure: process.env.NODE_ENV === 'production',
+      secure: req.secure,
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
