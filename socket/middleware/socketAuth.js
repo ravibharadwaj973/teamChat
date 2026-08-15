@@ -6,6 +6,7 @@ const socketAuth = async (socket, next) => {
   // 1. Manually run cookie-parser on the raw request
   // This turns the header string into the 'socket.request.cookies' object
   cookieParser(socket.request, {}, () => {});
+  
 
   try {
     // 2. Now you can use the 'simple' way just like your backend!
