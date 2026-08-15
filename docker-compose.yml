@@ -1,0 +1,60 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - redis
+    ports:
+      - "7000:7000" # REST API
+      - "5001:5001" # Socket.IO server backend embeds and starts itself
+
+  # Standalone Socket.IO service (socket/index.js), built from the same
+  # source as backend's embedded server above. `backend` already starts its
+  # own Socket.IO server on 5001, and that's what the frontend build below
+  # points at by default, since REST-triggered broadcasts (new messages,
+  # task assignments, announcements) are emitted via that in-process `io`
+  # instance — not this container. This service runs standalone and accepts
+  # direct socket connections fine; it just won't receive those REST
+  # broadcasts unless a shared adapter (e.g. Redis pub/sub) is wired between
+  # the two later. Included since it was asked for as its own service.
+  socket:
+    build:
+      context: .
+      dockerfile: socket/Dockerfile
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - redis
+    ports:
+      - "5002:5001"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:7000/api
+        NEXT_PUBLIC_SOCKET_URL: http://localhost:5001
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
