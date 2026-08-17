@@ -6,7 +6,7 @@ const chatCompletion = async ({
   system,
   messages = [],
   temperature = 0.2,
-  maxTokens = 700,
+  maxTokens = 800,
 }) => {
   if (!process.env.GROQ_API_KEY) {
     return { ok: false, error: "GROQ_API_KEY is not configured on the server." };
@@ -20,9 +20,16 @@ const chatCompletion = async ({
         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+        model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
         temperature,
         max_tokens: maxTokens,
+        // Reasoning-capable models (e.g. the gpt-oss family) spend part of
+        // max_tokens on a hidden reasoning trace before the visible answer;
+        // this API 400s if the configured model doesn't support the param
+        // at all, so only send it when explicitly opted into via env.
+        ...(process.env.GROQ_REASONING_EFFORT
+          ? { reasoning_effort: process.env.GROQ_REASONING_EFFORT }
+          : {}),
         messages: [{ role: "system", content: system }, ...messages],
       }),
     });

@@ -126,18 +126,18 @@ const startServer = async () => {
 
     // 2. Redis Connection is handled inside lib/redis.js (auto-connect)
 
-    // 3. Mount Routes
-    app.use("/api/auth", authRoutes);
-    app.use("/api/users", userRoutes);
-    // app.use("/api/friends", friendRoutes); // retired with the friends feature
-    app.use("/api/conversations", conversationRoutes);
-    app.use("/api/messages", messageRoutes);
-    app.use("/api/notifications", notificationRoutes);
-    // TeamSpace: organizations, teams and invites
-    app.use("/api/organizations", organizationRoutes);
-    app.use("/api/invites", inviteRoutes);
-    // Platform super-admin console
-    app.use("/api/admin", adminRoutes);
+      // 3. Mount Routes
+      app.use("/api/auth", authRoutes);
+      app.use("/api/users", userRoutes);
+      // app.use("/api/friends", friendRoutes); // retired with the friends feature
+      app.use("/api/conversations", conversationRoutes);
+      app.use("/api/messages", messageRoutes);
+      app.use("/api/notifications", notificationRoutes);
+      // TeamSpace: organizations, teams and invites
+      app.use("/api/organizations", organizationRoutes);
+      app.use("/api/invites", inviteRoutes);
+      // Platform super-admin console
+      app.use("/api/admin", adminRoutes);
 
     // Static Files & Error Handling
     app.use("/uploads", express.static("uploads"));

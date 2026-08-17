@@ -64,8 +64,11 @@ const buildContext = async (organization, membership, userId) => {
     .map((t) => t._id);
 
   const myConvIds = myConvs.map((c) => c._id);
+  const usernameById = new Map(
+    memberships.filter((m) => m.user).map((m) => [m.user._id.toString(), m.user.username])
+  );
 
-  const [assignedTasks, events, files, recentMessages, pendingInvites, audit] =
+  const [assignedTasks, events, files, recentByChannel, totalMessageCount, pendingInvites, audit] =
     await Promise.all([
       isManagerPlus
         ? Task.find({ organization: orgId, assignedBy: userId })
@@ -91,15 +94,34 @@ const buildContext = async (organization, membership, userId) => {
         .limit(20)
         .populate("team", "name")
         .populate("uploadedBy", "username"),
-      // Only messages from channels the user is in
-      Message.find({
+      // A few of the most recent messages PER channel the user can see —
+      // not just the N most recent org-wide, which in a many-channel org
+      // would be dominated by whichever channel happens to be freshest and
+      // silently starve every other channel out of the context entirely.
+      Message.aggregate([
+        {
+          $match: {
+            conversationId: { $in: myConvIds },
+            deleted: { $ne: true },
+            messageType: { $nin: ["system"] },
+          },
+        },
+        { $sort: { createdAt: -1 } },
+        {
+          $group: {
+            _id: "$conversationId",
+            msgs: {
+              $push: { content: "$content", sender: "$sender", createdAt: "$createdAt" },
+            },
+          },
+        },
+        { $project: { msgs: { $slice: ["$msgs", 3] } } },
+      ]),
+      Message.countDocuments({
         conversationId: { $in: myConvIds },
         deleted: { $ne: true },
         messageType: { $nin: ["system"] },
-      })
-        .sort({ createdAt: -1 })
-        .limit(15)
-        .populate("sender", "username"),
+      }),
       isAdmin
         ? OrgInvite.find({ organization: orgId, status: "pending" })
             .select("email role")
@@ -114,6 +136,11 @@ const buildContext = async (organization, membership, userId) => {
         : [],
     ]);
 
+  const recentMessages = recentByChannel
+    .flatMap((g) => g.msgs.map((m) => ({ ...m, conversationId: g._id })))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 40);
+
   const convName = new Map(myConvs.map((c) => [c._id.toString(), c.groupName]));
 
   const lines = [];
@@ -122,17 +149,6 @@ const buildContext = async (organization, membership, userId) => {
   );
   lines.push(
     `CURRENT USER: ${me.username} — role ${membership.role}${membership.jobTitle ? `, job title "${membership.jobTitle}"` : ""}`
-  );
-
-  lines.push(
-    `MEMBERS (${memberships.length}): ` +
-      memberships
-        .filter((m) => m.user)
-        .map(
-          (m) =>
-            `${m.user.username} (${m.role}${m.jobTitle ? `, ${m.jobTitle}` : ""})`
-        )
-        .join("; ")
   );
 
   if (departments.length) {
@@ -163,11 +179,18 @@ const buildContext = async (organization, membership, userId) => {
     );
   }
 
+  lines.push(
+    `TOTAL MESSAGE COUNT across channels visible to this user: ${totalMessageCount}`
+  );
+
   if (recentMessages.length) {
-    lines.push(`RECENT MESSAGES visible to this user (newest first):`);
+    lines.push(
+      `RECENT MESSAGES (up to a few per channel visible to this user, newest first):`
+    );
     recentMessages.forEach((m) => {
+      const senderName = usernameById.get(m.sender?.toString()) || "?";
       lines.push(
-        `  [#${convName.get(m.conversationId.toString()) || "channel"}] ${m.sender?.username || "?"}: ${clip(m.content, 140)}`
+        `  [#${convName.get(m.conversationId.toString()) || "channel"}] ${senderName}: ${clip(m.content, 140)}`
       );
     });
   }
@@ -222,6 +245,16 @@ const buildContext = async (organization, membership, userId) => {
     );
   }
 
+  const namedMembers = memberships.filter((m) => m.user);
+  const MEMBER_DISPLAY_CAP = 80;
+  lines.push(
+    `MEMBERS (${namedMembers.length}${namedMembers.length > MEMBER_DISPLAY_CAP ? `, showing first ${MEMBER_DISPLAY_CAP} — use the directory to search the rest by name/team/title` : ""}): ` +
+      namedMembers
+        .slice(0, MEMBER_DISPLAY_CAP)
+        .map((m) => `${m.user.username} (${m.role}${m.jobTitle ? `, ${m.jobTitle}` : ""})`)
+        .join("; ")
+  );
+
   if (isAdmin && pendingInvites.length) {
     lines.push(
       `PENDING INVITES (admin-only info): ` +
@@ -238,8 +271,13 @@ const buildContext = async (organization, membership, userId) => {
     });
   }
 
-  // Hard cap the context size
-  return lines.join("\n").slice(0, 9000);
+  // Hard cap the context size. MEMBERS (the single biggest, least
+  // time-sensitive section) is rendered last among the non-admin sections
+  // specifically so that if any org is still large enough to hit this cap,
+  // it's the roster that gets truncated — not today's messages/announcements.
+  // Kept moderate (not just "as large as possible") because this whole
+  // string counts against Groq's per-minute token budget on every request.
+  return lines.join("\n").slice(0, 10000);
 };
 
 // POST /organizations/:orgId/ai/ask — the ONLY path to the LLM.
@@ -261,7 +299,9 @@ const askAssistant = async (req, res) => {
       });
     }
 
-    // Sanitize client-sent history: last 6 turns, valid roles only
+    // Sanitize client-sent history: last 4 turns, valid roles only. Kept
+    // short because it's re-sent (and re-billed against the per-minute
+    // token budget) on every follow-up question in the conversation.
     const safeHistory = (Array.isArray(history) ? history : [])
       .filter(
         (m) =>
@@ -269,8 +309,8 @@ const askAssistant = async (req, res) => {
           (m.role === "user" || m.role === "assistant") &&
           typeof m.content === "string"
       )
-      .slice(-6)
-      .map((m) => ({ role: m.role, content: m.content.slice(0, 1200) }));
+      .slice(-4)
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 600) }));
 
     const context = await buildContext(
       req.organization,
@@ -296,9 +336,15 @@ ${context}`;
     });
 
     if (!result.ok) {
-      return res.status(502).json({
+      // Log the real upstream reason, but never forward Groq's raw error
+      // text to the client — it can include their own billing/upsell copy
+      // and internal account ids, which mean nothing to a TeamSpace user.
+      const isRateLimit = /rate limit/i.test(result.error || "");
+      return res.status(isRateLimit ? 429 : 502).json({
         success: false,
-        error: result.error,
+        error: isRateLimit
+          ? "The assistant is handling a lot of requests right now — try again in a few seconds."
+          : "The assistant couldn't answer that just now. Please try again.",
       });
     }
 
